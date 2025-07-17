@@ -1,106 +1,85 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { AgentPanel } from "@/components/agent-panel";
-import { Chat } from "@/components/chat";
-import type { Agent, AgentEvent, GuardrailCheck, Message } from "@/lib/types";
-import { callChatAPI } from "@/lib/api";
+import { useState } from "react";
 
 export default function Home() {
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [events, setEvents] = useState<AgentEvent[]>([]);
-  const [agents, setAgents] = useState<Agent[]>([]);
-  const [currentAgent, setCurrentAgent] = useState<string>("");
-  const [guardrails, setGuardrails] = useState<GuardrailCheck[]>([]);
-  const [context, setContext] = useState<Record<string, any>>({});
+  const [messages, setMessages] = useState<{ role: "user" | "bot"; content: string }[]>([]);
+  const [input, setInput] = useState("");
   const [conversationId, setConversationId] = useState<string | null>(null);
-  // Loading state while awaiting assistant response
-  const [isLoading, setIsLoading] = useState(false);
+  const [loading, setLoading] = useState(false);
 
-  // Boot the conversation
-  useEffect(() => {
-    (async () => {
-      const data = await callChatAPI("", conversationId ?? "");
-      setConversationId(data.conversation_id);
-      setCurrentAgent(data.current_agent);
-      setContext(data.context);
-      const initialEvents = (data.events || []).map((e: any) => ({
-        ...e,
-        timestamp: e.timestamp ?? Date.now(),
-      }));
-      setEvents(initialEvents);
-      setAgents(data.agents || []);
-      setGuardrails(data.guardrails || []);
-      if (Array.isArray(data.messages)) {
-        setMessages(
-          data.messages.map((m: any) => ({
-            id: Date.now().toString() + Math.random().toString(),
-            content: m.content,
-            role: "assistant",
-            agent: m.agent,
-            timestamp: new Date(),
-          }))
-        );
-      }
-    })();
-  }, []);
-
-  // Send a user message
-  const handleSendMessage = async (content: string) => {
-    const userMsg: Message = {
-      id: Date.now().toString(),
-      content,
-      role: "user",
-      timestamp: new Date(),
-    };
-
+  const sendMessage = async () => {
+    if (!input.trim()) return;
+    const userMsg = { role: "user" as const, content: input };
     setMessages((prev) => [...prev, userMsg]);
-    setIsLoading(true);
-
-    const data = await callChatAPI(content, conversationId ?? "");
-
-    if (!conversationId) setConversationId(data.conversation_id);
-    setCurrentAgent(data.current_agent);
-    setContext(data.context);
-    if (data.events) {
-      const stamped = data.events.map((e: any) => ({
-        ...e,
-        timestamp: e.timestamp ?? Date.now(),
-      }));
-      setEvents((prev) => [...prev, ...stamped]);
+    setLoading(true);
+    try {
+      const res = await fetch("/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: input,
+          conversation_id: conversationId || undefined,
+        }),
+      });
+      const data = await res.json();
+      setConversationId(data.conversation_id);
+      setMessages((prev) => [...prev, { role: "bot", content: data.reply }]);
+    } catch (e) {
+      setMessages((prev) => [...prev, { role: "bot", content: "出错了，请稍后再试。" }]);
     }
-    if (data.agents) setAgents(data.agents);
-    // Update guardrails state
-    if (data.guardrails) setGuardrails(data.guardrails);
-
-    if (data.messages) {
-      const responses: Message[] = data.messages.map((m: any) => ({
-        id: Date.now().toString() + Math.random().toString(),
-        content: m.content,
-        role: "assistant",
-        agent: m.agent,
-        timestamp: new Date(),
-      }));
-      setMessages((prev) => [...prev, ...responses]);
-    }
-
-    setIsLoading(false);
+    setInput("");
+    setLoading(false);
   };
 
   return (
-    <main className="flex h-screen gap-2 bg-gray-100 p-2">
-      <AgentPanel
-        agents={agents}
-        currentAgent={currentAgent}
-        events={events}
-        guardrails={guardrails}
-        context={context}
-      />
-      <Chat
-        messages={messages}
-        onSendMessage={handleSendMessage}
-        isLoading={isLoading}
-      />
-    </main>
+    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50">
+      <div className="w-full max-w-xl bg-white rounded shadow p-6 mt-10">
+        <h1 className="text-2xl font-bold mb-4 text-center">财务智能问答机器人</h1>
+        <div className="h-96 overflow-y-auto border rounded p-4 bg-gray-50 mb-4">
+          {messages.length === 0 && (
+            <div className="text-gray-400 text-center mt-20">请输入您的财务相关问题…</div>
+          )}
+          {messages.map((msg, idx) => (
+            <div key={idx} className={`mb-3 flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+              <div
+                className={`px-4 py-2 rounded-lg max-w-[80%] whitespace-pre-line ${
+                  msg.role === "user"
+                    ? "bg-blue-600 text-white"
+                    : "bg-gray-200 text-gray-900"
+                }`}
+              >
+                {msg.content}
+              </div>
+            </div>
+          ))}
+          {loading && (
+            <div className="mb-3 flex justify-start">
+              <div className="px-4 py-2 rounded-lg bg-gray-200 text-gray-900 animate-pulse">正在思考…</div>
+            </div>
+          )}
+        </div>
+        <div className="flex gap-2">
+          <input
+            className="flex-1 border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400"
+            type="text"
+            placeholder="请输入问题，回车发送"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !loading) sendMessage();
+            }}
+            disabled={loading}
+          />
+          <button
+            className="bg-blue-600 text-white px-4 py-2 rounded disabled:opacity-50"
+            onClick={sendMessage}
+            disabled={loading || !input.trim()}
+          >
+            发送
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
